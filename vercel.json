@@ -6,8 +6,7 @@
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "main:app",
-       "routePrefix": "/api"
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [
