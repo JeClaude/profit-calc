@@ -27,7 +27,7 @@ class PurchaseInput(BaseModel):
     selling_price_per_kg: float = Field(gt=0, description="Selling price per kg")
 
 
-@app.post("/calculate")
+@app.post("/api/calculate")
 def calculate(data: PurchaseInput):
     total_kg = data.packs * data.kg_per_pack
     total_cost = data.packs * data.cost_per_pack
