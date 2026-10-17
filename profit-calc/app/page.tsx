@@ -34,27 +34,20 @@ export default function Home() {
   const [productName, setProductName] = useState("");
   const [numPacks, setNumPacks] = useState("");
   const [sellingPricePerKg, setSellingPricePerKg] = useState("");
-  
-  // Start with an empty array (no packs by default)
   const [packDetails, setPackDetails] = useState<{ kg: string; cost: string }[]>([]);
-  
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Dynamically update pack fields when numPacks changes
   useEffect(() => {
     const count = parseInt(numPacks) || 0;
-    
     setPackDetails((prev) => {
       const newPacks = [...prev];
       if (count > newPacks.length) {
-        // Add new empty packs
         for (let i = newPacks.length; i < count; i++) {
           newPacks.push({ kg: "", cost: "" });
         }
       } else if (count < newPacks.length) {
-        // Remove extra packs
         newPacks.length = count;
       }
       return newPacks;
@@ -98,12 +91,47 @@ export default function Home() {
     }
   };
 
+  // --- EXPORT TO EXCEL/CSV FUNCTION ---
+  const downloadCSV = () => {
+    if (!result) return;
+
+    // 1. Create General Summary rows
+    let csvContent = `Product Name,${result.product_name}\n\n`;
+    csvContent += `GENERAL SUMMARY\n`;
+    csvContent += `Metric,Value\n`;
+    csvContent += `Total Weight (kg),${result.summary.total_kg}\n`;
+    csvContent += `Total Cost,${result.summary.total_cost}\n`;
+    csvContent += `Average Cost per Kg,${result.summary.cost_per_kg}\n`;
+    csvContent += `Selling Price per Kg,${result.summary.selling_price_per_kg}\n`;
+    csvContent += `Total Revenue,${result.summary.total_revenue}\n`;
+    csvContent += `${result.profit.is_loss ? "Total Loss" : "Total Profit"},${result.profit.total_profit}\n`;
+    csvContent += `Profit per Kg,${result.profit.profit_per_kg}\n`;
+    csvContent += `Margin (%),${result.profit.profit_margin_percent}%\n\n`;
+
+    // 2. Create Pack Breakdown rows
+    csvContent += `PACK BREAKDOWN\n`;
+    csvContent += `Pack,Weight (kg),Cost,Cost/kg,Revenue,Profit\n`;
+    result.packs_breakdown.forEach((pack) => {
+      csvContent += `Pack ${pack.pack_number},${pack.kg},${pack.cost},${pack.cost_per_kg},${pack.revenue},${pack.profit}\n`;
+    });
+
+    // 3. Trigger Download
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `${result.product_name.replace(/\s+/g, '_')}_Profit_Report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const money = (n: number) => new Intl.NumberFormat("en-RW").format(n);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6 flex justify-center pb-20">
+    <main className="min-h-screen bg-gray-50 p-6 flex justify-center pb-20 text-black">
       <div className="w-full max-w-3xl">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">💰 Profit Calculator</h1>
+        <h1 className="text-3xl font-bold text-black mb-6">💰 Profit Calculator</h1>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow p-6 space-y-6">
           
@@ -132,16 +160,13 @@ export default function Home() {
             />
           </div>
 
-          {/* ONLY show this section if the user has typed a number > 0 */}
           {packDetails.length > 0 && (
             <div className="border-t pt-4 animate-in fade-in duration-300">
-              <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                Pack Details
-              </h3>
+              <h3 className="text-lg font-bold text-black mb-3">Pack Details</h3>
               <div className="space-y-3">
                 {packDetails.map((pack, index) => (
                   <div key={index} className="flex gap-4 items-end bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span className="font-medium text-gray-600 mb-2 w-16">
+                    <span className="font-bold text-black mb-2 w-16">
                       Pack {index + 1}
                     </span>
                     <div className="flex-1">
@@ -176,17 +201,24 @@ export default function Home() {
             {loading ? "Calculating..." : "Calculate Profit"}
           </button>
           
-          {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm">{error}</div>}
+          {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm font-medium">{error}</div>}
         </form>
 
-        {/* ========================================= */}
-        {/* RESULTS SECTION (Previously Missing!)     */}
-        {/* ========================================= */}
         {result && (
           <div className="mt-8 space-y-6">
+            
             {/* General Summary */}
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
-              <h2 className="text-xl font-bold text-gray-800 border-b pb-2">General Summary</h2>
+              <div className="flex justify-between items-center border-b pb-2">
+                <h2 className="text-xl font-bold text-black">General Summary</h2>
+                <button 
+                  onClick={downloadCSV}
+                  className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition"
+                >
+                  ⬇️ Download Excel (CSV)
+                </button>
+              </div>
+              
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Stat label="Total Weight" value={`${money(result.summary.total_kg)} kg`} />
                 <Stat label="Total Cost" value={money(result.summary.total_cost)} />
@@ -194,14 +226,17 @@ export default function Home() {
                 <Stat label="Selling Price/kg" value={money(result.summary.selling_price_per_kg)} />
               </div>
               
-              <div className={`p-4 rounded-lg mt-4 ${result.profit.is_loss ? "bg-red-50 border border-red-200" : "bg-green-50 border border-green-200"}`}>
+              {/* Profit/Loss Box */}
+              <div className={`p-4 rounded-lg mt-4 border ${result.profit.is_loss ? "bg-red-50 border-red-300" : "bg-green-50 border-green-300"}`}>
                 <div className="flex justify-between items-center">
-                  <span className="text-lg font-semibold">{result.profit.is_loss ? "📉 Total Loss" : "📈 Total Profit"}</span>
-                  <span className={`text-2xl font-bold ${result.profit.is_loss ? "text-red-600" : "text-green-600"}`}>
+                  <span className={`text-lg font-bold ${result.profit.is_loss ? "text-red-700" : "text-green-700"}`}>
+                    {result.profit.is_loss ? "📉 Total Loss" : "📈 Total Profit"}
+                  </span>
+                  <span className={`text-2xl font-black ${result.profit.is_loss ? "text-red-700" : "text-green-700"}`}>
                     {money(result.profit.total_profit)}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm mt-1 text-gray-600">
+                <div className="flex justify-between items-center text-sm mt-1 font-medium text-gray-800">
                   <span>Profit per Kg: {money(result.profit.profit_per_kg)}</span>
                   <span>Margin: {result.profit.profit_margin_percent}%</span>
                 </div>
@@ -210,10 +245,10 @@ export default function Home() {
 
             {/* Individual Pack Breakdown */}
             <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Pack Breakdown</h2>
+              <h2 className="text-xl font-bold text-black mb-4 border-b pb-2">Pack Breakdown</h2>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-100 text-gray-700">
+                <table className="w-full text-left text-sm text-black">
+                  <thead className="bg-gray-200 text-black font-bold">
                     <tr>
                       <th className="p-3 rounded-tl-lg">Pack</th>
                       <th className="p-3">Weight</th>
@@ -226,11 +261,11 @@ export default function Home() {
                   <tbody className="divide-y divide-gray-200">
                     {result.packs_breakdown.map((pack) => (
                       <tr key={pack.pack_number} className="hover:bg-gray-50">
-                        <td className="p-3 font-medium">Pack {pack.pack_number}</td>
-                        <td className="p-3">{pack.kg} kg</td>
-                        <td className="p-3">{money(pack.cost)}</td>
-                        <td className="p-3">{money(pack.cost_per_kg)}</td>
-                        <td className="p-3">{money(pack.revenue)}</td>
+                        <td className="p-3 font-bold">Pack {pack.pack_number}</td>
+                        <td className="p-3 font-medium">{pack.kg} kg</td>
+                        <td className="p-3 font-medium">{money(pack.cost)}</td>
+                        <td className="p-3 font-medium">{money(pack.cost_per_kg)}</td>
+                        <td className="p-3 font-medium">{money(pack.revenue)}</td>
                         <td className={`p-3 font-bold ${pack.profit < 0 ? "text-red-600" : "text-green-600"}`}>
                           {money(pack.profit)}
                         </td>
@@ -252,11 +287,11 @@ export default function Home() {
 function Input({ label, ...props }: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div className="w-full">
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <label className="block text-sm font-bold text-black mb-1">{label}</label>
       <input
         {...props}
         required
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="w-full border border-gray-400 rounded-lg px-3 py-2 text-black font-medium placeholder:text-gray-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
     </div>
   );
@@ -265,9 +300,9 @@ function Input({ label, ...props }: { label: string } & React.InputHTMLAttribute
 // Reusable Stat Component
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-      <div className="text-xs text-gray-500 mb-1">{label}</div>
-      <div className="font-semibold text-gray-800">{value}</div>
+    <div className="bg-gray-100 p-3 rounded-lg border border-gray-300">
+      <div className="text-xs font-bold text-gray-600 mb-1">{label}</div>
+      <div className="font-bold text-black text-lg">{value}</div>
     </div>
   );
 }
