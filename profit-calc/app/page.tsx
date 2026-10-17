@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAuth } from "../context/AuthContext";
+import { useRouter } from "next/navigation";
 
 type PackResult = {
   pack_number: number;
@@ -31,6 +33,9 @@ type Result = {
 };
 
 export default function Home() {
+  const { token, logout } = useAuth();
+  const router = useRouter();
+
   const [productName, setProductName] = useState("");
   const [sellingPricePerKg, setSellingPricePerKg] = useState("");
   
@@ -42,6 +47,19 @@ export default function Home() {
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  // Protect the route: If no token, kick them to login
+  useEffect(() => {
+    if (!token) {
+      router.push("/login");
+    }
+  }, [token, router]);
+
+  // Prevent UI flash if not authenticated
+  if (!token) {
+    return <div className="min-h-screen flex items-center justify-center font-bold text-black">Checking authentication...</div>;
+  }
 
   // Add a new empty pack
   const addPack = () => {
@@ -67,6 +85,7 @@ export default function Home() {
     setLoading(true);
     setResult(null);
     setError(null);
+    setSaveStatus(null);
 
     try {
       const res = await fetch("/api/calculate", {
@@ -90,6 +109,35 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Failed to calculate");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Save to MongoDB Database
+  const saveCalculation = async () => {
+    if (!result) return;
+    setSaveStatus("Saving...");
+    try {
+      const res = await fetch("/api/save-calculation", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          product_name: result.product_name,
+          packs: result.packs_breakdown.map((p) => ({ kg: p.kg, cost: p.cost })),
+          selling_price_per_kg: result.summary.selling_price_per_kg,
+          result_data: result
+        }),
+      });
+      
+      if (!res.ok) throw new Error("Failed to save");
+      
+      setSaveStatus("✅ Saved to History!");
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      setSaveStatus("❌ Error saving data");
+      setTimeout(() => setSaveStatus(null), 3000);
     }
   };
 
@@ -130,7 +178,22 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50 p-6 flex justify-center pb-20 text-black">
       <div className="w-full max-w-3xl">
-        <h1 className="text-3xl font-bold text-black mb-6">💰 Profit Calculator</h1>
+        
+        {/* Header with Logout & History Link */}
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-black">💰 Profit Calculator</h1>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => router.push("/history")} 
+              className="text-blue-600 font-bold hover:underline"
+            >
+              View History
+            </button>
+            <button onClick={logout} className="text-red-600 font-bold hover:underline">
+              Logout
+            </button>
+          </div>
+        </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow p-6 space-y-6">
           
@@ -221,14 +284,22 @@ export default function Home() {
             
             {/* General Summary */}
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
-              <div className="flex justify-between items-center border-b pb-2">
+              <div className="flex flex-wrap justify-between items-center border-b pb-2 gap-2">
                 <h2 className="text-xl font-bold text-black">General Summary</h2>
-                <button 
-                  onClick={downloadCSV}
-                  className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition"
-                >
-                  ⬇️ Download Excel (CSV)
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={saveCalculation}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition"
+                  >
+                    {saveStatus ? saveStatus : "💾 Save Calculation"}
+                  </button>
+                  <button 
+                    onClick={downloadCSV}
+                    className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition"
+                  >
+                    ⬇️ Download Excel
+                  </button>
+                </div>
               </div>
               
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

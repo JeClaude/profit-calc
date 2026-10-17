@@ -1,38 +1,134 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from typing import List
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+import motor.motor_asyncio
+import os
+from dotenv import load_dotenv
+
+# Modern password hashing (bypasses bcrypt 72-byte limit & version errors)
+from pwdlib import PasswordHash
+
+load_dotenv()
 
 app = FastAPI(title="Profit Calculator API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Remember to restrict this in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- DATABASE SETUP ---
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key_change_in_production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
+db = client.profit_calculator_db
+users_collection = db.get_collection("users")
+history_collection = db.get_collection("history")
+
+# --- AUTH SETUP ---
+password_hash = PasswordHash.recommended()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+
+# --- MODELS ---
+class UserRegister(BaseModel):
+    phone_number: str
+    password: str
+
+class UserLogin(BaseModel):
+    phone_number: str
+    password: str
+
 class PackDetail(BaseModel):
-    kg: float = Field(gt=0, description="Weight of this specific pack in kg")
-    cost: float = Field(gt=0, description="Buying price of this specific pack")
+    kg: float = Field(gt=0)
+    cost: float = Field(gt=0)
 
 class PurchaseInput(BaseModel):
     product_name: str
     packs: List[PackDetail]
     selling_price_per_kg: float = Field(gt=0)
 
+class SaveCalculationInput(PurchaseInput):
+    result_data: dict
+
+# --- HELPERS ---
+def verify_password(plain_password, hashed_password):
+    return password_hash.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return password_hash.hash(password)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        phone_number: str = payload.get("sub")
+        if phone_number is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = await users_collection.find_one({"phone_number": phone_number})
+    if user is None:
+        raise credentials_exception
+    return user
+
+# --- ROUTES: AUTHENTICATION ---
+@app.post("/api/register")
+async def register(user: UserRegister):
+    existing_user = await users_collection.find_one({"phone_number": user.phone_number})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Phone number already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    new_user = {
+        "phone_number": user.phone_number,
+        "password": hashed_password,
+        "created_at": datetime.utcnow()
+    }
+    await users_collection.insert_one(new_user)
+    return {"message": "User created successfully"}
+
+@app.post("/api/login")
+async def login(user: UserLogin):
+    # Find user in DB
+    db_user = await users_collection.find_one({"phone_number": user.phone_number})
+    
+    # Verify password
+    if not db_user or not verify_password(user.password, db_user["password"]):
+        raise HTTPException(status_code=401, detail="Incorrect phone number or password")
+    
+    access_token = create_access_token(data={"sub": db_user["phone_number"]})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --- ROUTES: CALCULATIONS ---
 @app.post("/api/calculate")
 def calculate(data: PurchaseInput):
     total_kg = 0
     total_cost = 0
     pack_results = []
 
-    # 1. Calculate general totals
     for i, pack in enumerate(data.packs):
         pack_total_cost = pack.cost
         pack_cost_per_kg = pack.cost / pack.kg
-        
-        # Calculate profit for this specific pack
         pack_revenue = data.selling_price_per_kg * pack.kg
         pack_profit = pack_revenue - pack_total_cost
         
@@ -49,10 +145,7 @@ def calculate(data: PurchaseInput):
             "profit_margin_percent": round((pack_profit / pack.cost) * 100, 2) if pack.cost > 0 else 0
         })
 
-    # 2. General summary calculations
     overall_cost_per_kg = total_cost / total_kg if total_kg > 0 else 0
-    profit_per_kg = data.selling_price_per_kg - overall_cost_per_kg
-    
     total_revenue = data.selling_price_per_kg * total_kg
     total_profit = total_revenue - total_cost
     profit_margin = (total_profit / total_cost) * 100 if total_cost > 0 else 0
@@ -67,10 +160,38 @@ def calculate(data: PurchaseInput):
             "total_revenue": round(total_revenue, 2),
         },
         "profit": {
-            "profit_per_kg": round(profit_per_kg, 2),
+            "profit_per_kg": round(data.selling_price_per_kg - overall_cost_per_kg, 2),
             "total_profit": round(total_profit, 2),
             "profit_margin_percent": round(profit_margin, 2),
             "is_loss": total_profit < 0,
         },
         "packs_breakdown": pack_results
     }
+
+# --- ROUTES: SAVE & HISTORY ---
+@app.post("/api/save-calculation")
+async def save_calculation(data: SaveCalculationInput, current_user: dict = Depends(get_current_user)):
+    record = {
+        "user_id": str(current_user["_id"]),
+        "phone_number": current_user["phone_number"],
+        "created_at": datetime.utcnow(),
+        "product_name": data.product_name,
+        "packs": [pack.model_dump() for pack in data.packs],
+        "selling_price_per_kg": data.selling_price_per_kg,
+        "result_data": data.result_data
+    }
+    await history_collection.insert_one(record)
+    return {"message": "Calculation saved successfully"}
+
+@app.get("/api/history")
+async def get_history(current_user: dict = Depends(get_current_user)):
+    # Fetch history for this specific user, sorted by newest first
+    cursor = history_collection.find({"user_id": str(current_user["_id"])}).sort("created_at", -1)
+    history = await cursor.to_list(length=100)
+    
+    # Format the _id and datetime so the frontend can read it
+    for item in history:
+        item["_id"] = str(item["_id"])
+        item["created_at"] = item["created_at"].isoformat()
+        
+    return history
