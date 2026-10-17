@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 type PackResult = {
   pack_number: number;
@@ -32,27 +32,29 @@ type Result = {
 
 export default function Home() {
   const [productName, setProductName] = useState("");
-  const [numPacks, setNumPacks] = useState("");
   const [sellingPricePerKg, setSellingPricePerKg] = useState("");
-  const [packDetails, setPackDetails] = useState<{ kg: string; cost: string }[]>([]);
+  
+  // Start with exactly 1 pack
+  const [packDetails, setPackDetails] = useState<{ kg: string; cost: string }[]>([
+    { kg: "", cost: "" }
+  ]);
+  
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const count = parseInt(numPacks) || 0;
-    setPackDetails((prev) => {
-      const newPacks = [...prev];
-      if (count > newPacks.length) {
-        for (let i = newPacks.length; i < count; i++) {
-          newPacks.push({ kg: "", cost: "" });
-        }
-      } else if (count < newPacks.length) {
-        newPacks.length = count;
-      }
-      return newPacks;
-    });
-  }, [numPacks]);
+  // Add a new empty pack
+  const addPack = () => {
+    setPackDetails([...packDetails, { kg: "", cost: "" }]);
+  };
+
+  // Remove a pack by index
+  const removePack = (index: number) => {
+    if (packDetails.length > 1) {
+      const updated = packDetails.filter((_, i) => i !== index);
+      setPackDetails(updated);
+    }
+  };
 
   const handlePackChange = (index: number, field: "kg" | "cost", value: string) => {
     const updated = [...packDetails];
@@ -91,11 +93,10 @@ export default function Home() {
     }
   };
 
-  // --- EXPORT TO EXCEL/CSV FUNCTION ---
+  // Export to Excel/CSV
   const downloadCSV = () => {
     if (!result) return;
 
-    // 1. Create General Summary rows
     let csvContent = `Product Name,${result.product_name}\n\n`;
     csvContent += `GENERAL SUMMARY\n`;
     csvContent += `Metric,Value\n`;
@@ -108,14 +109,12 @@ export default function Home() {
     csvContent += `Profit per Kg,${result.profit.profit_per_kg}\n`;
     csvContent += `Margin (%),${result.profit.profit_margin_percent}%\n\n`;
 
-    // 2. Create Pack Breakdown rows
     csvContent += `PACK BREAKDOWN\n`;
     csvContent += `Pack,Weight (kg),Cost,Cost/kg,Revenue,Profit\n`;
     result.packs_breakdown.forEach((pack) => {
       csvContent += `Pack ${pack.pack_number},${pack.kg},${pack.cost},${pack.cost_per_kg},${pack.revenue},${pack.profit}\n`;
     });
 
-    // 3. Trigger Download
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -142,15 +141,7 @@ export default function Home() {
             placeholder="e.g. Rice" 
           />
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input 
-              label="Number of Packs" 
-              type="number" 
-              min="1" 
-              value={numPacks} 
-              onChange={(e) => setNumPacks(e.target.value)} 
-              placeholder="e.g. 5"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b pb-6">
             <Input 
               label="Selling Price per Kg" 
               type="number" 
@@ -160,42 +151,62 @@ export default function Home() {
             />
           </div>
 
-          {packDetails.length > 0 && (
-            <div className="border-t pt-4 animate-in fade-in duration-300">
-              <h3 className="text-lg font-bold text-black mb-3">Pack Details</h3>
-              <div className="space-y-3">
-                {packDetails.map((pack, index) => (
-                  <div key={index} className="flex gap-4 items-end bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span className="font-bold text-black mb-2 w-16">
-                      Pack {index + 1}
-                    </span>
-                    <div className="flex-1">
-                      <Input 
-                        label="Weight (kg)" 
-                        type="number" 
-                        value={pack.kg} 
-                        onChange={(e) => handlePackChange(index, "kg", e.target.value)} 
-                        placeholder="30" 
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <Input 
-                        label="Cost" 
-                        type="number" 
-                        value={pack.cost} 
-                        onChange={(e) => handlePackChange(index, "cost", e.target.value)} 
-                        placeholder="15000" 
-                      />
-                    </div>
+          {/* Pack Details Section */}
+          <div>
+            <h3 className="text-lg font-bold text-black mb-3">Pack Details</h3>
+            <div className="space-y-3">
+              {packDetails.map((pack, index) => (
+                <div key={index} className="flex gap-4 items-end bg-gray-50 p-3 rounded-lg border border-gray-300">
+                  <span className="font-bold text-black mb-2 w-16">
+                    Pack {index + 1}
+                  </span>
+                  <div className="flex-1">
+                    <Input 
+                      label="Weight (kg)" 
+                      type="number" 
+                      value={pack.kg} 
+                      onChange={(e) => handlePackChange(index, "kg", e.target.value)} 
+                      placeholder="30" 
+                    />
                   </div>
-                ))}
-              </div>
+                  <div className="flex-1">
+                    <Input 
+                      label="Cost" 
+                      type="number" 
+                      value={pack.cost} 
+                      onChange={(e) => handlePackChange(index, "cost", e.target.value)} 
+                      placeholder="15000" 
+                    />
+                  </div>
+                  
+                  {/* Show Remove button only if there is more than 1 pack */}
+                  {packDetails.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removePack(index)}
+                      className="mb-1 bg-red-100 text-red-600 hover:bg-red-200 font-bold px-3 py-2 rounded-lg transition"
+                      title="Remove this pack"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
+
+            {/* Add Pack Button */}
+            <button
+              type="button"
+              onClick={addPack}
+              className="mt-4 w-full border-2 border-dashed border-blue-400 text-blue-600 hover:bg-blue-50 font-bold py-3 rounded-lg transition"
+            >
+              + Add Another Pack
+            </button>
+          </div>
 
           <button 
             type="submit" 
-            disabled={loading || packDetails.length === 0} 
+            disabled={loading} 
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? "Calculating..." : "Calculate Profit"}
@@ -204,6 +215,7 @@ export default function Home() {
           {error && <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm font-medium">{error}</div>}
         </form>
 
+        {/* Results Section */}
         {result && (
           <div className="mt-8 space-y-6">
             
