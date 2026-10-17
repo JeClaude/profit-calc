@@ -184,12 +184,29 @@ async def save_calculation(data: SaveCalculationInput, current_user: dict = Depe
     return {"message": "Calculation saved successfully"}
 
 @app.get("/api/history")
-async def get_history(current_user: dict = Depends(get_current_user)):
-    # Fetch history for this specific user, sorted by newest first
-    cursor = history_collection.find({"user_id": str(current_user["_id"])}).sort("created_at", -1)
-    history = await cursor.to_list(length=100)
+async def get_history(
+    start_date: str = None, 
+    end_date: str = None, 
+    current_user: dict = Depends(get_current_user)
+):
+    # Base query: only get this user's history
+    query = {"user_id": str(current_user["_id"])}
     
-    # Format the _id and datetime so the frontend can read it
+    # If a date filter is provided, add it to the query
+    if start_date or end_date:
+        date_filter = {}
+        if start_date:
+            date_filter["$gte"] = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+        if end_date:
+            date_filter["$lte"] = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        
+        query["created_at"] = date_filter
+
+    # Fetch and sort
+    cursor = history_collection.find(query).sort("created_at", -1)
+    history = await cursor.to_list(length=200)
+    
+    # Format for frontend
     for item in history:
         item["_id"] = str(item["_id"])
         item["created_at"] = item["created_at"].isoformat()
