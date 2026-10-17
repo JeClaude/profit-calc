@@ -64,6 +64,7 @@ export default function Home() {
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       
       const data = await res.json();
+      console.log("DATA FROM BACKEND:", data);
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to calculate");
